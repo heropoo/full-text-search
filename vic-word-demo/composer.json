@@ -8,7 +8,8 @@
     ],
     "require": {
         "heropoo/moon": "^0.3.7",
-        "lizhichao/word": "^1.3"
+        "lizhichao/word": "^1.3",
+        "elasticsearch/elasticsearch": "~5.0"
     },
     "autoload": {
         "psr-4": {

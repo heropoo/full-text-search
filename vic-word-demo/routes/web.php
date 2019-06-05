@@ -10,3 +10,6 @@ $router->get('article/add', 'IndexController::add');
 $router->post('article/save', 'IndexController::save');
 
 $router->get('article/word/{id}', 'IndexController::vicWord');
+$router->get('article/es/{id}', 'IndexController::createEsIndexType');
+
+$router->get('article/esi', 'IndexController::createEsIndex');

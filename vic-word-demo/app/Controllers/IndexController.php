@@ -4,6 +4,7 @@ namespace App\Controllers;
 use App\Models\Article;
 use App\Models\ArticleWord;
 use App\Models\Word;
+use Elasticsearch\ClientBuilder;
 use Lizhichao\Word\VicWord;
 use Moon\Controller;
 use Moon\Db\Connection;
@@ -23,11 +24,19 @@ class IndexController extends Controller
         $kw = trim(request('kw'));
         $list = [];
         if(strlen($kw) > 0){
-            $word = Word::find()->where('word=?', [$kw])->first();
-            if(!empty($word)){
-                $sql = "select a.* from article_word aw left join article a on aw.article_id=a.id where aw.word_id=? order by aw.count desc";
-                $list = ArticleWord::find()->getDb()->fetchAll($sql, [$word->id]);
-            }
+//            $word = Word::find()->where('word=?', [$kw])->first();
+//            if(!empty($word)){
+//                $sql = "select a.* from article_word aw left join article a on aw.article_id=a.id where aw.word_id=? order by aw.count desc";
+//                $list = ArticleWord::find()->getDb()->fetchAll($sql, [$word->id]);
+//            }
+            $client = ClientBuilder::create()->setHosts([env('ES_HOST')])->build();
+            $params['index'] = 'user';
+            $params['type'] = 'article';
+            $params['body']['query']['match']['content'] = $kw;
+            //执行查询
+            $rtn = $client->search($params)['hits'];
+//            dump($rtn);
+            $list = array_column($rtn['hits'], '_source');
         }else{
             $list = Article::find()->order('id desc')->all();
         }
@@ -43,16 +52,29 @@ class IndexController extends Controller
     {
         $title = request('title');
         $content = request('content');
-        //dump($title, $content);
 
         $article = new Article();
         $article->title = $title;
         $article->content = $content;
         $article->created_at = date('Y-m-d H:i:s');
         $article->updated_at = date('Y-m-d H:i:s');
-        $article->save();
 
-        $this->vicWord($article->id);
+        /** @var Connection $db */
+        $db = \Moon::$app->get('db');
+        $db->beginTransaction();
+
+        try{
+            $article->save();
+            //$this->vicWord($article->id);
+            $this->createEsIndexType($article->id);
+            $db->commit();
+        }catch (\Exception $e){
+            $db->rollback();
+            return [
+                'code' => 500,
+                'msg' => $e->getMessage()
+            ];
+        }
 
         return [
             'code' => 200,
@@ -62,19 +84,20 @@ class IndexController extends Controller
 
     public function vicWord($id)
     {
-        echo '<meta charset="utf-8">';
-        $start_time = microtime(true);
+//        $start_time = microtime(true);
         $article = Article::find()->where('id=?', [$id])->first();
         //定义词典文件路径
         define('_VIC_WORD_DICT_PATH_', \Moon::$app->getRootPath() . '/vendor/lizhichao/word/Data/dict.igb');
         $fc = new VicWord();
         $arr = $fc->getAutoWord(strip_tags($article->content));
-        //dump($arr);
 
         $bd_list = $this->mb_str_split('`~!@#$%^&*()_+-=[]\\{}|;\':",./<>? ·～！@#¥%……&*（）——【】、「」；；：“”‘’，。《》？');
         foreach ($arr as $item) {
             $w = trim($item[0]);
             if(strlen($w) == 0){
+                continue;
+            }
+            if(strlen($w) > 255){
                 continue;
             }
             if (in_array($w, $bd_list)) {
@@ -112,5 +135,69 @@ class IndexController extends Controller
     function mb_str_split($str)
     {
         return preg_split('/(?<!^)(?!$)/u', $str);
+    }
+
+    public function createEsIndexType($id){
+        $article = Article::find()->where('id=?', [$id])->first();
+
+        $client = ClientBuilder::create()->setHosts([env('ES_HOST')])->build();
+        //dump($client);
+        $params['body'] = array(
+            'id' => $article['id'],
+            'title' => $article['title'],
+            'content' => strip_tags($article['content']),
+        );
+//        $params['body'] = [
+//            'properties'=>[
+//                'title'=>[
+//                    'type'=>'text',
+//                    'analyzer'=> 'ik_max_word',
+//                    'search_analyzer'=> 'ik_max_word'
+//                ],
+//                'content'=>[
+//                    'type'=>'text',
+//                    'analyzer'=> 'ik_max_word',
+//                    'search_analyzer'=> 'ik_max_word'
+//                ],
+//                'id'=>$article['id']
+//            ]
+//
+//            //'id'=>$article['id']
+//        ];
+        $params['id'] = $article['id'];
+        $params['index'] = 'user';
+        $params['type'] = 'article';
+        $res = $client->index($params);
+        //var_dump($res);
+    }
+
+    public function createEsIndex(){
+        $client = ClientBuilder::create()->setHosts([env('ES_HOST')])->build();
+
+        echo $str = 'curl -X PUT \''.env('ES_HOST').':9200/user\' -d \'
+{
+  "mappings": {
+    "article": {
+      "properties": {
+        "id": {
+          "type": "text",
+          "analyzer": "ik_max_word",
+          "search_analyzer": "ik_max_word"
+        },
+        "title": {
+          "type": "text",
+          "analyzer": "ik_max_word",
+          "search_analyzer": "ik_max_word"
+        },
+        "content": {
+          "type": "text",
+          "analyzer": "ik_max_word",
+          "search_analyzer": "ik_max_word"
+        }
+      }
+    }
+  }
+}\'';
+
     }
 }
